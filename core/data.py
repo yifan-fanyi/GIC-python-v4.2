@@ -57,8 +57,12 @@ def load(Rtype, ct, size=[1024,256,32,8]):
         Yt = Load_from_Folder(folder=CLIC+"test"+str(size[0])+"/", color='RGB', ct=-1)
         Yt = np.array(Yt).astype('float16')
     if Rtype == 'train':
-        Yt = Load_from_Folder(folder=CLIC+"train"+str(size[0])+"/", color='RGB', ct=-1)+\
-            Load_from_Folder(folder=Holopix50k+'train'+str(size[0])+'/', color='RGB', ct=ct)
+        Yt = Load_from_Folder(folder=CLIC+"train"+str(size[0])+"/", color='RGB', ct=-1)
+        try:
+            a = Load_from_Folder(folder=Holopix50k+'train'+str(size[0])+'/', color='RGB', ct=ct)
+            Yt += a
+        except:
+            pass
         Yt = np.array(Yt).astype('float16')
     Y = [Yt]
     for i in range(1, len(size)):

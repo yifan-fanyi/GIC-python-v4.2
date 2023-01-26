@@ -7,7 +7,9 @@ from core.util.ac import HierarchyCABAC
 from core.util.evaluate import MSE
 from core.util.ReSample import *
 myLog('<FRAMEWORK> rdVQ 2022.12.09')
-Lagrange_multip = 10
+Lagrange_multip = 300000
+Lagrange_multip = 30000/1024**2
+print(Lagrange_multip)
 def toSpatial(cwSaab, iR, level, S,tX):
     for i in range(level, -1, -1):
         if i > 0:
@@ -29,39 +31,54 @@ class VQ:
         self.buffer = {}
         self.acc_bpp = 0
 
-    def to_spatial(self,iR, tX, level):
+    def to_spatial(self,iR, tX, level, useTx=False):
         for i in range(level, -1, -1):
             if i > 0:
-                iR = self.cwSaab.inverse_transform_one(iR, np.zeros_like(tX[i-1]), i)
+                if useTx == True:
+                    iR = self.cwSaab.inverse_transform_one(iR, tX[i-1], i)
+                else:
+                    iR = self.cwSaab.inverse_transform_one(iR, np.zeros_like(tX[i-1]), i)
             else:
                 iR = self.cwSaab.inverse_transform_one(iR, None, i)
         return iR
     
-    def RD_search(self, dmse, mse, omse, pidx, label, myhash, S):
+    def RD_search(self, dmse, mse, omse, pidx, label, myhash, S, fit=False):
+        print(np.mean(mse),np.mean(omse))
         min_cost, th = 1000000000, -1
-        for skip_TH in range(0, 10000, 50):
+        mr, md = 0, 0
+        for skip_TH in range(0, 100000, 200):
             idx = (dmse > skip_TH).reshape(-1)
-            st0 = HierarchyCABAC().encode(pidx, idx.reshape(S), 1) 
+            if fit == True:
+                st0=''
+                l = 2.75*np.sum(idx)/len(idx)+0.00276
+                l = int(l*len(idx))
+                for i in range(l+1):
+                    st0+='0'
+                
+           
+            else:
+                st0 = HierarchyCABAC().encode(pidx, idx.reshape(S), 1) 
             if self.Huffman[myhash][skip_TH] is None:
                 st0, st1 = '', ''
                 idx = np.zeros_like(idx)
             else:
                 st1 = self.Huffman[myhash][skip_TH].encode(label.reshape(-1)[idx])
-            r = len(st0+st1) / S[0] / 1024**2
+            r = len(st0+st1) / S[0] 
             d = np.zeros_like(mse)
-            d[idx] += mse[idx]
-            d[idx==False] += omse[idx==False]
+            d[idx==True] = mse[idx==True]
+            d[idx==False] = omse[idx==False]
             d = np.mean(d)
             cost = d + Lagrange_multip * r
             if min_cost > cost:
                 min_cost = cost
                 th = skip_TH
-        return th, [min_cost, r, d]
+                mr, md = r, d
+        return th, [min_cost, mr, md]
 
     def fit_huffmans(self, myhash, dmse, label):
         h = {}
         a = np.arange(self.n_clusters_list[int(myhash[1])][int(myhash[-1])]).tolist()
-        for skip_TH in range(0, 10000, 50):
+        for skip_TH in range(0, 100000, 200):
             idx = dmse > skip_TH
             tmp = label.reshape(-1)[idx.reshape(-1)].tolist() + a
             h[skip_TH] = Huffman().fit(np.array(tmp))
@@ -72,18 +89,18 @@ class VQ:
         S = [X.shape[0], X.shape[1], X.shape[2], -1]
         siX = np.zeros_like(X)
         siX[:, :,:,:self.n_dim_list[level][pos]] += iX
-        sX, siX = self.to_spatial(X, tX, level), self.to_spatial(siX, tX, level)
+        sX, siX = self.to_spatial(X, tX, level, True), self.to_spatial(siX, tX, level)
         acc_win = 1
         for i in range(0, level+1):
             acc_win *= self.win_list[i]
         sX, siX = Shrink(sX, acc_win), Shrink(siX, acc_win)
         sX, siX = sX.reshape(-1, sX.shape[-1]), siX.reshape(-1, siX.shape[-1])
-        dmse = (np.mean(np.square(sX), axis=1)-np.mean(np.square(sX-siX),axis=1))
         mse = (np.mean(np.square(sX-siX),axis=1))
         omse =  np.mean(np.square(sX), axis=1)
+        dmse = omse-mse
         if isfit == True:
             self.fit_huffmans(myhash, dmse, label)
-        th, cost = self.RD_search(dmse, mse, omse, pidx, label, myhash, S)
+        th, cost = self.RD_search(dmse, mse, omse, pidx, label, myhash, S, isfit)
         idx = (dmse > th).reshape(-1)
         iX = iX.reshape(-1, iX.shape[-1])
         iX[idx == False] *= 0
